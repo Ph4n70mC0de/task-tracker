@@ -1,0 +1,11 @@
+# Runtime data — tasks.json is created in whatever directory the CLI runs in
+tasks.json
+tasks.json.tmp
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db

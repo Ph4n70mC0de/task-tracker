@@ -1,0 +1,14 @@
+{
+  "name": "task-tracker-cli",
+  "version": "1.0.0",
+  "description": "A zero-dependency command-line task tracker storing tasks in tasks.json",
+  "main": "src/cli.js",
+  "bin": {
+    "task-cli": "bin/task-cli.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "start": "node bin/task-cli.js"
+  },
+  "license": "MIT"
+}
