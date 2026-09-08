@@ -77,3 +77,22 @@ test('loadTasks rejects duplicate task IDs', () => {
   fs.writeFileSync(process.env.TASK_TRACKER_FILE, JSON.stringify([TASK, TASK]));
   assert.throws(() => storage.loadTasks(), /duplicate task IDs/);
 });
+
+test('saveTasks leaves no temp file behind on success', () => {
+  storage.ensureStorageFile();
+  storage.saveTasks([TASK]);
+  assert.equal(fs.existsSync(process.env.TASK_TRACKER_FILE + '.tmp'), false);
+  assert.deepEqual(storage.loadTasks(), [TASK]);
+});
+
+test('saveTasks cleans up the temp file when the final rename fails', () => {
+  storage.ensureStorageFile();
+  storage.saveTasks([TASK]);
+  // Simulate an unwritable target: replace tasks.json with a directory so
+  // the final rename fails after the temp file has been written.
+  fs.unlinkSync(process.env.TASK_TRACKER_FILE);
+  fs.mkdirSync(process.env.TASK_TRACKER_FILE);
+  assert.throws(() => storage.saveTasks([TASK]), /Could not write/);
+  assert.equal(fs.existsSync(process.env.TASK_TRACKER_FILE + '.tmp'), false);
+});
+

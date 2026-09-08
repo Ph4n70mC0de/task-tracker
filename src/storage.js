@@ -49,12 +49,22 @@ function loadTasks() {
 
 /**
  * Write the task collection back to disk in a readable, stable format.
+ * Writes to a temporary file and renames it into place so a crash mid-write
+ * can never leave a partially written (corrupt) tasks.json behind.
  */
 function saveTasks(tasks) {
   const file = storageFilePath();
+  const tmpFile = file + '.tmp';
   try {
-    fs.writeFileSync(file, JSON.stringify(tasks, null, 2) + '\n', 'utf8');
+    fs.writeFileSync(tmpFile, JSON.stringify(tasks, null, 2) + '\n', 'utf8');
+    fs.renameSync(tmpFile, file);
   } catch (err) {
+    // Best-effort cleanup so a failed save does not leave litter behind.
+    try {
+      if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+    } catch {
+      // ignore cleanup failure; the original error matters more
+    }
     throw new Error(`Could not write ${file}: ${err.message}`);
   }
   return tasks;
