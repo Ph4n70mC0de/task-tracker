@@ -4,6 +4,9 @@ A small, zero-dependency command-line to-do tracker. Tasks are stored in a
 single JSON file (`tasks.json`) in the current directory. Built entirely with
 the Node.js standard library — no frameworks, databases, or third-party packages.
 
+> Project reference: https://roadmap.sh/projects/task-tracker
+
+
 ## Requirements
 
 - Node.js 18 or newer (developed and tested on Node 24). No `npm install` step is needed.
