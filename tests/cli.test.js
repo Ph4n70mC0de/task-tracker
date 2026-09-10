@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { runCommand } = require('../src/cli');
+const storage = require('../src/storage');
 
 let tmpDir;
 let file;
@@ -86,6 +87,18 @@ test('update: persists new description and refreshes updatedAt while keeping cre
   // Rewrite the file with a known old timestamp so the change is unambiguous
   // even when the test runs within the same millisecond.
   const older = { ...before, updatedAt: '2020-01-01T00:00:00.000Z' };
+  fs.writeFileSync(file, JSON.stringify([older]));
+  const result = cli('update', '1', 'Buy groceries and cook dinner');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Task updated successfully \(ID: 1\)/);
+
+  const after = loadJson()[0];
+  assert.equal(after.description, 'Buy groceries and cook dinner');
+  assert.equal(after.createdAt, before.createdAt);
+  assert.notEqual(after.updatedAt, before.updatedAt);
+  assert.equal(after.createdAt, older.createdAt);
+});
+
 test('unknown ID: clear error, non-zero exit, file unchanged', () => {
   cli('add', 'Buy groceries');
   const before = fs.readFileSync(file, 'utf8');
@@ -179,18 +192,6 @@ test('malformed storage file produces a clear error and is not overwritten', () 
   assert.equal(fs.readFileSync(file, 'utf8'), '{broken'); // data not silently replaced
 });
 
-  fs.writeFileSync(file, JSON.stringify([older]));
-  const result = cli('update', '1', 'Buy groceries and cook dinner');
-  assert.equal(result.code, 0);
-  assert.match(result.out, /Task updated successfully \(ID: 1\)/);
-
-  const after = loadJson()[0];
-  assert.equal(after.description, 'Buy groceries and cook dinner');
-  assert.equal(after.createdAt, before.createdAt);
-  assert.notEqual(after.updatedAt, before.updatedAt);
-  assert.equal(after.createdAt, older.createdAt);
-});
-
 test('mark-done and mark-in-progress persist status changes', () => {
   cli('add', 'Buy groceries');
   assert.equal(cli('mark-in-progress', '1').out, 'Task marked as in-progress (ID: 1)');
@@ -207,4 +208,113 @@ test('delete: removes the task and leaves the rest intact', () => {
   assert.match(result.out, /Task deleted successfully \(ID: 1\)/);
   const tasks = loadJson();
   assert.deepEqual(tasks.map((t) => t.id), [2]);
+});
+
+test('show: displays a single task by ID', () => {
+  cli('add', 'Buy groceries');
+  const result = cli('show', '1');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /ID: 1/);
+  assert.match(result.out, /Buy groceries/);
+  assert.match(result.out, /Created: /);
+  assert.match(result.out, /Updated: /);
+});
+
+test('show: unknown ID returns error', () => {
+  cli('add', 'Buy groceries');
+  const result = cli('show', '999');
+  assert.equal(result.code, 1);
+  assert.match(result.err, /Task with ID 999 was not found/);
+});
+
+test('done, start, reopen: change status correctly', () => {
+  cli('add', 'Buy groceries');
+  assert.equal(cli('done', '1').out, 'Task marked as done (ID: 1)');
+  assert.equal(loadJson()[0].status, 'done');
+
+  assert.equal(cli('start', '1').out, 'Task marked as in-progress (ID: 1)');
+  assert.equal(loadJson()[0].status, 'in-progress');
+
+  assert.equal(cli('reopen', '1').out, 'Task reopened (ID: 1)');
+  assert.equal(loadJson()[0].status, 'todo');
+});
+
+test('mark-done and mark-in-progress aliases still work', () => {
+  cli('add', 'Buy groceries');
+  assert.equal(cli('mark-done', '1').out, 'Task marked as done (ID: 1)');
+  assert.equal(loadJson()[0].status, 'done');
+  assert.equal(cli('mark-in-progress', '1').out, 'Task marked as in-progress (ID: 1)');
+  assert.equal(loadJson()[0].status, 'in-progress');
+});
+
+test('list --json outputs stable JSON array', () => {
+  cli('add', 'Buy groceries');
+  cli('add', 'Study for exam');
+  const result = cli('list', '--json');
+  assert.equal(result.code, 0);
+  const parsed = JSON.parse(result.out);
+  assert.ok(Array.isArray(parsed));
+  assert.equal(parsed.length, 2);
+  assert.equal(parsed[0].id, 1);
+  assert.equal(parsed[1].id, 2);
+});
+
+test('show --json outputs stable JSON object', () => {
+  cli('add', 'Buy groceries');
+  const result = cli('show', '--json', '1');
+  assert.equal(result.code, 0);
+  const parsed = JSON.parse(result.out);
+  assert.equal(parsed.id, 1);
+  assert.equal(parsed.description, 'Buy groceries');
+});
+
+test('delete --yes bypasses confirmation', () => {
+  cli('add', 'Buy groceries');
+  const result = cli('--yes', 'delete', '1');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Task deleted successfully/);
+  assert.equal(loadJson().length, 0);
+});
+
+test('delete without --yes asks for confirmation and respects answer', () => {
+  cli('add', 'Buy groceries');
+  const out = [];
+  const err = [];
+  const confirm = (msg) => {
+    out.push(msg);
+    return false;
+  };
+  const code = runCommand(['delete', '1'], { log: (m) => out.push(m), error: (m) => err.push(m) }, storage, confirm);
+  assert.equal(code, 0);
+  assert.match(out.join('\n'), /Delete this task/);
+  assert.match(out.join('\n'), /Deletion cancelled/);
+  assert.equal(loadJson().length, 1);
+});
+
+test('help command shows usage', () => {
+  const result = cli('help');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Usage:/);
+  assert.match(result.out, /add <description>/);
+  assert.match(result.out, /show <id>/);
+  assert.match(result.out, /done <id>/);
+});
+
+test('unknown command still rejected', () => {
+  const unknown = cli('frobnicate');
+  assert.equal(unknown.code, 1);
+  assert.match(unknown.err, /Unknown command "frobnicate"/);
+});
+
+test('global --help flag shows usage', () => {
+  const result = cli('--help');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Usage:/);
+});
+
+test('--no-color flag is accepted without error', () => {
+  cli('add', 'Buy groceries');
+  const result = cli('--no-color', 'list');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Buy groceries/);
 });
