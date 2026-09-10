@@ -3,10 +3,16 @@
 // Status values are constrained to this list everywhere in the application.
 const STATUSES = Object.freeze(['todo', 'in-progress', 'done']);
 
-// Validation errors are user-facing: they mean "fix your input".
+const STATUS_COMMAND_MAP = Object.freeze({
+  'mark-in-progress': 'in-progress',
+  'mark-done': 'done',
+  start: 'in-progress',
+  done: 'done',
+  reopen: 'todo',
+});
+
 class ValidationError extends Error {}
 
-// CLI errors mean "your command line was wrong" (usage problems).
 class CliError extends Error {}
 
 /**
@@ -41,6 +47,14 @@ function parseStatusFilter(raw) {
     );
   }
   return raw;
+}
+
+function resolveCommandStatus(command) {
+  const status = STATUS_COMMAND_MAP[command];
+  if (!status) {
+    throw new CliError(`Command "${command}" does not change task status.`);
+  }
+  return status;
 }
 
 /**
@@ -78,10 +92,12 @@ function validateTasksData(data) {
 
 module.exports = {
   STATUSES,
+  STATUS_COMMAND_MAP,
   ValidationError,
   CliError,
   cleanDescription,
   parseTaskId,
   parseStatusFilter,
+  resolveCommandStatus,
   validateTasksData,
 };
