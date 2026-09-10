@@ -1,18 +1,12 @@
 'use strict';
 
 const fs = require('fs');
-const { ValidationError, validateTasksData } = require('./validation');
+const { ValidationError, validateTasksData, migrateTask, SCHEMA_VERSION } = require('./validation');
 
-// The data file lives in the current working directory, as required by the spec.
-// TASK_TRACKER_FILE exists only so the test suite can point at a temp directory.
 function storageFilePath() {
   return process.env.TASK_TRACKER_FILE || 'tasks.json';
 }
 
-/**
- * Create tasks.json with an empty collection when it does not exist.
- * An existing file is left untouched.
- */
 function ensureStorageFile() {
   const file = storageFilePath();
   if (!fs.existsSync(file)) {
@@ -21,10 +15,6 @@ function ensureStorageFile() {
   return file;
 }
 
-/**
- * Load and validate all tasks. Creates the file on first use.
- * Never silently replaces unreadable data: an empty or malformed file is an error.
- */
 function loadTasks() {
   const file = ensureStorageFile();
   let raw;
@@ -44,22 +34,22 @@ function loadTasks() {
   } catch (err) {
     throw new ValidationError(`${file} is not valid JSON: ${err.message}`);
   }
-  return validateTasksData(data);
+  const validated = validateTasksData(data);
+  const migrated = validated.map(migrateTask);
+  if (JSON.stringify(migrated) !== JSON.stringify(validated)) {
+    saveTasks(migrated);
+  }
+  return migrated;
 }
 
-/**
- * Write the task collection back to disk in a readable, stable format.
- * Writes to a temporary file and renames it into place so a crash mid-write
- * can never leave a partially written (corrupt) tasks.json behind.
- */
 function saveTasks(tasks) {
   const file = storageFilePath();
   const tmpFile = file + '.tmp';
+  const versioned = tasks.map((task) => ({ ...task, __version: SCHEMA_VERSION }));
   try {
-    fs.writeFileSync(tmpFile, JSON.stringify(tasks, null, 2) + '\n', 'utf8');
+    fs.writeFileSync(tmpFile, JSON.stringify(versioned, null, 2) + '\n', 'utf8');
     fs.renameSync(tmpFile, file);
   } catch (err) {
-    // Best-effort cleanup so a failed save does not leave litter behind.
     try {
       if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
     } catch {
