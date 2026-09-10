@@ -18,6 +18,10 @@ const {
   getTodayTasks,
   getWeekTasks,
   getStats,
+  archiveTask,
+  restoreTask,
+  isArchived,
+  getArchivedTasks,
 } = require('../src/tasks');
 const { ValidationError } = require('../src/validation');
 
@@ -267,4 +271,45 @@ test('getStats: returns correct counts', () => {
   assert.equal(stats.inProgress, 1);
   assert.equal(stats.done, 1);
   assert.equal(stats.overdue, 0);
+});
+
+test('archiveTask: sets archived=true and updates updatedAt', () => {
+  const tasks = makeTasks();
+  const { tasks: archived } = archiveTask(tasks, 1, T2);
+  const task = archived.find((t) => t.id === 1);
+  assert.equal(task.archived, true);
+  assert.equal(task.updatedAt, T2);
+  assert.equal(task.status, 'todo');
+  assert.equal(archived.find((t) => t.id === 2).archived, false);
+});
+
+test('restoreTask: sets archived=false and updates updatedAt', () => {
+  let tasks = makeTasks();
+  tasks = archiveTask(tasks, 1, T2).tasks;
+  const { tasks: restored } = restoreTask(tasks, 1, T2);
+  const task = restored.find((t) => t.id === 1);
+  assert.equal(task.archived, false);
+  assert.equal(task.updatedAt, T2);
+  assert.equal(task.status, 'todo');
+});
+
+test('archiveTask: unknown ID is rejected', () => {
+  assert.throws(() => archiveTask(makeTasks(), 999, T2), /ID 999 was not found/);
+});
+
+test('restoreTask: unknown ID is rejected', () => {
+  assert.throws(() => restoreTask(makeTasks(), 999, T2), /ID 999 was not found/);
+});
+
+test('getArchivedTasks: returns only archived tasks', () => {
+  let tasks = makeTasks();
+  tasks = archiveTask(tasks, 1, T2).tasks;
+  tasks = archiveTask(tasks, 2, T2).tasks;
+  assert.deepEqual(getArchivedTasks(tasks).map((t) => t.id), [1, 2]);
+});
+
+test('isArchived: returns boolean for archived field', () => {
+  assert.equal(isArchived({ id: 1, archived: true }), true);
+  assert.equal(isArchived({ id: 1, archived: false }), false);
+  assert.equal(isArchived({ id: 1 }), false);
 });
