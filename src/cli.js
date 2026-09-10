@@ -2,7 +2,7 @@
 
 const fs = require('node:fs');
 const { CliError, ValidationError, parseTaskId, parseStatusFilter, STATUSES, resolveCommandStatus, parsePriority, parseDueDate, parseTags } = require('./validation');
-const { createTask, updateTask, deleteTask, setTaskStatus, listTasks, searchTasks, getOverdueTasks, getTodayTasks, getWeekTasks, getStats } = require('./tasks');
+const { createTask, updateTask, deleteTask, setTaskStatus, listTasks, searchTasks, getOverdueTasks, getTodayTasks, getWeekTasks, getStats, archiveTask, restoreTask, getArchivedTasks } = require('./tasks');
 const { formatTaskList, formatTask, formatTaskListJson, formatTaskJson, setForceColor } = require('./output');
 const storage = require('./storage');
 
@@ -18,6 +18,12 @@ Commands:
   done <id>                              Mark task as done
   start <id>                             Mark task as in-progress
   reopen <id>                            Reopen a completed task
+  archive <id>                           Archive a task
+  restore <id>                           Restore an archived task
+  backup                                 Create a timestamped backup
+  recover <file>                         Restore from a backup file
+  export <file>                          Export tasks to a JSON file
+  import <file>                          Import tasks from a JSON file
   list [filter]                          List tasks (filter: todo|in-progress|done)
   search <query>                         Full-text search in tasks
   due <today|overdue|week>               Show tasks due today, overdue, or this week
@@ -38,6 +44,12 @@ const COMMAND_ARGS = {
   reopen: [1, 1],
   'mark-done': [1, 1],
   'mark-in-progress': [1, 1],
+  archive: [1, 1],
+  restore: [1, 1],
+  backup: [0, 0],
+  recover: [1, 1],
+  export: [1, 1],
+  'import': [1, 1],
   list: [0, 1],
   search: [1, 1],
   due: [1, 1],
@@ -224,6 +236,50 @@ function runCommand(argv, io = console, storageModule = storage, confirm = null)
         io.log(`Task reopened (ID: ${id})`);
         return 0;
       }
+      case 'archive': {
+        const id = parseTaskId(args[0]);
+        const tasks = storageModule.loadTasks();
+        const now = new Date().toISOString();
+        const { tasks: updated } = archiveTask(tasks, id, now);
+        storageModule.saveTasks(updated);
+        io.log(`Task archived (ID: ${id})`);
+        return 0;
+      }
+      case 'restore': {
+        const id = parseTaskId(args[0]);
+        const tasks = storageModule.loadTasks();
+        const now = new Date().toISOString();
+        const { tasks: updated } = restoreTask(tasks, id, now);
+        storageModule.saveTasks(updated);
+        io.log(`Task restored (ID: ${id})`);
+        return 0;
+      }
+      case 'backup': {
+        const backupPath = storageModule.backupTasks();
+        io.log(`Backup created: ${backupPath}`);
+        return 0;
+      }
+      case 'recover': {
+        if (!flags.yes && !confirmDelete(io, confirm)) {
+          return 0;
+        }
+        const recovered = storageModule.recoverTasks(args[0]);
+        io.log(`Recovered ${recovered.length} tasks from backup.`);
+        return 0;
+      }
+      case 'export': {
+        const exportPath = storageModule.exportTasks(args[0]);
+        io.log(`Tasks exported to: ${exportPath}`);
+        return 0;
+      }
+      case 'import': {
+        if (!flags.yes && !confirmDelete(io, confirm)) {
+          return 0;
+        }
+        const result = storageModule.importTasks(args[0]);
+        io.log(`Imported ${result.imported} tasks (${result.skipped} duplicates skipped). Total: ${result.total}.`);
+        return 0;
+      }
       case 'list': {
         const positionalFilter = args.length === 1 ? args[0] : null;
         const filter = {
@@ -233,6 +289,9 @@ function runCommand(argv, io = console, storageModule = storage, confirm = null)
           tag: values.tag || null,
           query: values.query || null,
         };
+        if (values.archived) {
+          filter.archived = true;
+        }
         const sortBy = values.sort || 'id';
         const tasks = listTasks(storageModule.loadTasks(), filter, sortBy);
         if (outputJson) {
