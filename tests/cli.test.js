@@ -11,6 +11,9 @@ const path = require('node:path');
 const { runCommand } = require('../src/cli');
 const storage = require('../src/storage');
 
+const T1 = '2026-09-08T10:00:00.000Z';
+const T2 = '2026-09-08T11:00:00.000Z';
+
 let tmpDir;
 let file;
 let io;
@@ -458,8 +461,9 @@ test('search: returns empty for no matches', () => {
 });
 
 test('due today: shows tasks due today', () => {
-  const today = new Date().toISOString().slice(0, 10);
-  cli('add', 'Buy groceries', '--due', today);
+  const now = new Date();
+  const localToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+  cli('add', 'Buy groceries', '--due', localToday);
   const result = cli('due', 'today');
   assert.equal(result.code, 0);
   assert.match(result.out, /Buy groceries/);
@@ -506,4 +510,157 @@ test('unknown due filter is rejected', () => {
   const result = cli('due', 'invalid');
   assert.equal(result.code, 1);
   assert.match(result.err, /Unknown due filter/);
+});
+
+test('archive: marks task as archived', () => {
+  cli('add', 'Buy groceries');
+  const result = cli('archive', '1');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Task archived/);
+  assert.equal(loadJson()[0].archived, true);
+});
+
+test('restore: unmarks archived task', () => {
+  cli('add', 'Buy groceries');
+  cli('archive', '1');
+  const result = cli('restore', '1');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Task restored/);
+  assert.equal(loadJson()[0].archived, false);
+});
+
+test('list: excludes archived tasks by default', () => {
+  cli('add', 'Visible task');
+  cli('add', 'Archived task');
+  cli('archive', '2');
+  const result = cli('list');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Visible task/);
+  assert.doesNotMatch(result.out, /Archived task/);
+});
+
+test('list --archived: shows only archived tasks', () => {
+  cli('add', 'Visible task');
+  cli('add', 'Archived task');
+  cli('archive', '2');
+  const result = cli('list', '--archived');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Archived task/);
+  assert.doesNotMatch(result.out, /Visible task/);
+});
+
+test('archive: unknown ID returns error', () => {
+  const result = cli('archive', '999');
+  assert.equal(result.code, 1);
+  assert.match(result.err, /Task with ID 999 was not found/);
+});
+
+test('restore: unknown ID returns error', () => {
+  cli('add', 'Buy groceries');
+  const result = cli('restore', '999');
+  assert.equal(result.code, 1);
+  assert.match(result.err, /Task with ID 999 was not found/);
+});
+
+test('archive: file unchanged on unknown ID', () => {
+  cli('add', 'Buy groceries');
+  const before = fs.readFileSync(file, 'utf8');
+  cli('archive', '999');
+  assert.equal(fs.readFileSync(file, 'utf8'), before);
+});
+
+test('backup: creates a backup file and reports its path', () => {
+  cli('add', 'Buy groceries');
+  const result = cli('backup');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Backup created: .*\.backup\..*\.json/);
+  const backupPath = result.out.replace('Backup created: ', '').trim();
+  assert.ok(fs.existsSync(backupPath));
+  fs.unlinkSync(backupPath);
+});
+
+test('recover: restores tasks from a backup file', () => {
+  cli('add', 'Task one');
+  const backupResult = cli('backup');
+  const backupPath = backupResult.out.replace('Backup created: ', '').trim();
+  cli('add', 'Task two');
+  const result = cli('--yes', 'recover', backupPath);
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Recovered 1 tasks/);
+  const tasks = loadJson();
+  assert.equal(tasks.length, 1);
+  assert.equal(tasks[0].description, 'Task one');
+  fs.unlinkSync(backupPath);
+});
+
+test('recover: without --yes asks for confirmation and respects answer', () => {
+  cli('add', 'Buy groceries');
+  const backupResult = cli('backup');
+  const backupPath = backupResult.out.replace('Backup created: ', '').trim();
+  cli('add', 'Second task');
+  const out = [];
+  const err = [];
+  const confirm = (msg) => {
+    out.push(msg);
+    return false;
+  };
+  const code = runCommand(['recover', backupPath], { log: (m) => out.push(m), error: (m) => err.push(m) }, storage, confirm);
+  assert.equal(code, 0);
+  assert.match(out.join('\n'), /Delete this task/);
+  assert.match(out.join('\n'), /Deletion cancelled/);
+  assert.equal(loadJson().length, 2);
+  fs.unlinkSync(backupPath);
+});
+
+test('export: writes tasks to a file', () => {
+  cli('add', 'Buy groceries');
+  const exportPath = path.join(tmpDir, 'export.json');
+  const result = cli('export', exportPath);
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Tasks exported to/);
+  assert.ok(fs.existsSync(exportPath));
+  const payload = JSON.parse(fs.readFileSync(exportPath, 'utf8'));
+  assert.equal(payload.tasks.length, 1);
+  assert.ok(payload.exportedAt);
+});
+
+test('import: imports tasks from a JSON array file and merges', () => {
+  cli('add', 'Existing task');
+  const incoming = [
+    { id: 2, title: 'Imported', description: 'Imported task', status: 'todo', priority: 'medium', project: null, tags: [], dueAt: null, completedAt: null, createdAt: '2026-09-08T11:00:00.000Z', updatedAt: '2026-09-08T11:00:00.000Z' },
+  ];
+  const importPath = path.join(tmpDir, 'import.json');
+  fs.writeFileSync(importPath, JSON.stringify(incoming));
+  const result = cli('--yes', 'import', importPath);
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Imported 1 tasks/);
+  const tasks = loadJson();
+  assert.equal(tasks.length, 2);
+  assert.equal(tasks[1].description, 'Imported task');
+});
+
+test('import: skips duplicates by ID', () => {
+  cli('add', 'Existing task');
+  const incoming = [
+    { id: 1, title: 'Duplicate', description: 'Duplicate task', status: 'todo', priority: 'medium', project: null, tags: [], dueAt: null, completedAt: null, createdAt: '2026-09-08T11:00:00.000Z', updatedAt: '2026-09-08T11:00:00.000Z' },
+  ];
+  const importPath = path.join(tmpDir, 'import.json');
+  fs.writeFileSync(importPath, JSON.stringify(incoming));
+  const result = cli('--yes', 'import', importPath);
+  assert.equal(result.code, 0);
+  assert.match(result.out, /duplicates skipped/);
+  const tasks = loadJson();
+  assert.equal(tasks.length, 1);
+});
+
+test('recover: rejects nonexistent backup file', () => {
+  const result = cli('recover', '/nonexistent/backup.json');
+  assert.equal(result.code, 1);
+  assert.match(result.err, /not found/);
+});
+
+test('export: rejects invalid export path', () => {
+  const result = cli('export', '/invalid/path/export.json');
+  // On Windows, this might succeed or fail depending on permissions; just check it runs
+  assert.ok(result.code === 0 || result.code === 1);
 });

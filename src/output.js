@@ -62,7 +62,7 @@ function formatField(label, value) {
 
 function formatTask(task) {
   const lines = [
-    `ID: ${task.id} | ${formatStatus(task.status)} | ${task.title || task.description}`,
+    `ID: ${task.id} | ${formatStatus(task.status)}${task.archived ? ' | archived' : ''} | ${task.title || task.description}`,
     formatField('Description', task.description),
     formatField('Priority', formatPriority(task.priority)),
     formatField('Project', task.project),

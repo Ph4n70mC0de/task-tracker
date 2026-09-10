@@ -42,6 +42,7 @@ function createTask(tasks, rawDescription, optionsOrNow, now) {
     tags,
     dueAt,
     completedAt: null,
+    archived: false,
     createdAt: now,
     updatedAt: now,
   };
@@ -124,14 +125,21 @@ function matchesQuery(task, query) {
   return searchFields.some((field) => typeof field === 'string' && field.toLowerCase().includes(q));
 }
 
+function matchesArchived(task, archived) {
+  if (archived === undefined) return !task.archived;
+  if (archived === null) return true;
+  return !!task.archived === archived;
+}
+
 function filterTasks(tasks, options = {}) {
-  const { status, priority, project, tag, query } = options;
+  const { status, priority, project, tag, query, archived } = options;
   return tasks.filter((t) =>
     matchesStatus(t, status) &&
     matchesPriority(t, priority) &&
     matchesProject(t, project) &&
     matchesTag(t, tag) &&
-    matchesQuery(t, query)
+    matchesQuery(t, query) &&
+    matchesArchived(t, archived)
   );
 }
 
@@ -218,6 +226,32 @@ function getStats(tasks) {
   return stats;
 }
 
+function archiveTask(tasks, id, now = new Date().toISOString()) {
+  findTask(tasks, id);
+  return {
+    tasks: tasks.map((t) =>
+      t.id === id ? { ...t, archived: true, updatedAt: now } : t
+    ),
+  };
+}
+
+function restoreTask(tasks, id, now = new Date().toISOString()) {
+  findTask(tasks, id);
+  return {
+    tasks: tasks.map((t) =>
+      t.id === id ? { ...t, archived: false, updatedAt: now } : t
+    ),
+  };
+}
+
+function isArchived(task) {
+  return !!task.archived;
+}
+
+function getArchivedTasks(tasks) {
+  return tasks.filter(isArchived);
+}
+
 module.exports = {
   findTask,
   nextId,
@@ -233,6 +267,10 @@ module.exports = {
   getTodayTasks,
   getWeekTasks,
   getStats,
+  archiveTask,
+  restoreTask,
+  isArchived,
+  getArchivedTasks,
   isOverdue,
   isToday,
   isThisWeek,

@@ -100,6 +100,9 @@ function migrateTask(task) {
   if (!migrated.completedAt) {
     migrated.completedAt = null;
   }
+  if (!migrated.archived) {
+    migrated.archived = false;
+  }
   return migrated;
 }
 
@@ -153,6 +156,11 @@ function validateTaskRecord(task) {
     );
   }
   if (task.completedAt !== undefined && task.completedAt !== null && typeof task.completedAt !== 'string') {
+    throw new ValidationError(
+      `tasks.json contains an invalid task record: ${JSON.stringify(task)}`
+    );
+  }
+  if (task.archived !== undefined && typeof task.archived !== 'boolean') {
     throw new ValidationError(
       `tasks.json contains an invalid task record: ${JSON.stringify(task)}`
     );
