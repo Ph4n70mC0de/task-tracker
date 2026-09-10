@@ -1,79 +1,52 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to this project are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [1.3.0] - 2026-09-10
+## [2.0.0] — 2026-09-10
 
 ### Added
-- `task-cli search <query>` for full-text search across title, description, project, and tags.
-- `task-cli due today|overdue|week` for time-based task views.
-- `task-cli stats` for task counts (total, todo, in-progress, done, overdue, today, this week).
-- `list` command supports `--status`, `--priority`, `--project`, `--tag`, `--sort`, and `--query` flags.
-- Deterministic sorting by id, created, updated, due, priority, and status.
-- Domain tests for multi-criteria filtering, sorting, search, overdue/today/week detection, and statistics.
-- CLI integration tests for search, due queries, stats, and multi-flag list filtering.
+
+- `archive <id>` — archive a task so it is hidden from default `list` output.
+- `restore <id>` — unarchive a previously archived task.
+- `list --archived` — show only archived tasks (default `list` excludes archived).
+- `backup` — create a timestamped backup of the current `tasks.json` in the same directory.
+- `recover <file>` — replace the current store with the contents of a backup file (requires `--yes` or interactive confirmation).
+- `export <file>` — export all tasks to a JSON file with schema version and export timestamp.
+- `import <file>` — import tasks from a JSON file or an object with a `tasks` array; duplicates (by ID) are skipped and a summary is printed.
+- `archived` field on every task record (schema v2); migrated automatically on first load.
+- `show` output now includes an `archived` indicator when a task is archived.
+- Configuration module (`src/config.js`) with precedence: CLI flags > environment variables > config file (`task-tracker.json` or `.task-tracker.json` in cwd or `~/.task-tracker/`) > defaults.
+- Environment variables: `TASK_TRACKER_FILE`, `TASK_TRACKER_COLOR`, `TASK_TRACKER_DATE_FORMAT`, `TASK_TRACKER_DEFAULT_PROJECT`.
+- `configFilePaths()` and `loadConfigFile()` exported for testing and future tooling.
+- `storageDir()` and `storageBaseName()` on the storage module.
+- Domain functions `archiveTask`, `restoreTask`, `isArchived`, `getArchivedTasks` on `src/tasks.js`.
+- Storage functions `backupTasks`, `recoverTasks`, `exportTasks`, `importTasks` on `src/storage.js`.
+- 48 new tests covering archive/restore, backup/recover, export/import, and configuration (total: 133 passing).
 
 ### Changed
-- `list` positional filter still works for backward compatibility.
-- Sort defaults to ID when no `--sort` flag is provided.
 
-## [1.2.0] - 2026-09-10
-
-### Added
-- Schema version 2 with new task fields: `title`, `priority`, `project`, `tags`, `dueAt`, `completedAt`.
-- Automatic migration from v1 to v2 on load; old `tasks.json` files are upgraded in place with safe defaults.
-- `--priority` flag on `add` and `update` (values: `low`, `medium`, `high`, `urgent`).
-- `--due <ISO-8601 date>` flag on `add` and `update`.
-- `--project <name>` flag on `add` and `update`.
-- `--tags <tag1,tag2>` flag on `add` and `update`.
-- `done` command now records `completedAt` timestamp.
-- `reopen` command clears `completedAt`.
-- Validation for priority values, ISO-8601 due dates, and tag arrays.
-- Colored priority indicators in human-readable output.
-- Storage tests for migration, validation of new fields, and idempotent load of v2 data.
-- Domain tests for optional fields, partial updates, and `completedAt` behavior.
-
-### Changed
-- `update` command accepts optional description argument when only flags are provided.
-- `saveTasks` writes `__version: 2` into every persisted task record.
-- `loadTasks` migrates v1 records to v2 and rewrites the file only when migration occurs.
+- `list` no longer requires a positional status filter; all filter flags are now optional.
+- `createTask` sets `archived: false` on all newly created tasks.
+- `filterTasks` excludes archived tasks by default; pass `archived: true` to include only archived.
+- `importTasks` now returns accurate `imported` and `skipped` counts (previously reported total incoming as imported).
+- `importTasks` merges new tasks by ID, skipping duplicates instead of overwriting existing records.
 
 ### Fixed
-- Validation now accepts both v1 and v2 task records during migration.
 
-## [1.1.0] - 2026-09-10
+- `due today` now uses local date comparison consistently with `isToday` (UTC date strings caused timezone-dependent misses).
 
-### Added
-- `task-cli help` and command-specific `--help` output.
-- `task-cli show <id>` to display a single task.
-- `task-cli done <id>`, `task-cli start <id>`, `task-cli reopen <id>` commands.
-- Backward-compatible aliases `mark-done` and `mark-in-progress`.
-- `--json` flag for machine-readable output on `list` and `show`.
-- `--no-color` flag to disable ANSI color output.
-- `--yes` flag to bypass confirmation prompts on destructive actions.
-- Confirmation prompt before `delete` to prevent accidental data loss.
-- Colored status indicators in default human-readable output.
-- Improved empty-state messages and command help text.
-- GitHub Actions CI running Node.js 18, 20, and 22 LTS.
-- Baseline regression tests and fixed nested test registration bug in `cli.test.js`.
-
-### Changed
-- `list` output format now includes colored status by default.
-- CLI argument parsing extracts global flags before command dispatch.
-- Task timestamps remain in UTC ISO-8601 format.
-
-### Fixed
-- Nested test registration in `tests/cli.test.js` that prevented the `unknown ID` test from executing.
-
-## [1.0.0] - 2026-09-08
+## [1.1.0] — 2026-09-08
 
 ### Added
-- Initial release: `add`, `update`, `delete`, `mark-in-progress`, `mark-done`, `list`.
-- JSON persistence with atomic temp-file rename.
-- Task model: `id`, `description`, `status`, `createdAt`, `updatedAt`.
-- Statuses: `todo`, `in-progress`, `done`.
-- Built-in Node.js test runner with unit and integration tests.
-- `TASK_TRACKER_FILE` environment variable for test isolation.
+
+- Schema version 2 with automatic migration from version 1.
+- Task fields: `title`, `priority`, `project`, `tags`, `dueAt`, `completedAt`.
+- Commands: `done`, `start`, `reopen`, `search`, `due`, `stats`.
+- Aliases: `mark-done` → `done`, `mark-in-progress` → `start`.
+- `--json` output mode for `list`, `show`, and `stats`.
+- `--no-color` flag.
+- `--yes` flag to skip destructive-action confirmation.
+- Multi-criteria list filtering (`--status`, `--priority`, `--project`, `--tag`).
+- Deterministic sorting (`--sort id|created|updated|due|priority|status`).
+- Atomic file writes with temp-file rename and cleanup on failure.
+- Schema validation on load: rejects malformed JSON, empty files, non-array top-level, invalid records, duplicate IDs.
