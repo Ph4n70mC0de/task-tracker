@@ -1,8 +1,8 @@
 'use strict';
 
 const fs = require('node:fs');
-const { CliError, ValidationError, parseTaskId, parseStatusFilter, STATUSES, resolveCommandStatus } = require('./validation');
-const { createTask, updateTask, deleteTask, setTaskStatus, listTasks } = require('./tasks');
+const { CliError, ValidationError, parseTaskId, parseStatusFilter, STATUSES, resolveCommandStatus, parsePriority, parseDueDate, parseTags } = require('./validation');
+const { createTask, updateTask, deleteTask, setTaskStatus, listTasks, searchTasks, getOverdueTasks, getTodayTasks, getWeekTasks, getStats } = require('./tasks');
 const { formatTaskList, formatTask, formatTaskListJson, formatTaskJson, setForceColor } = require('./output');
 const storage = require('./storage');
 
@@ -11,24 +11,27 @@ const USAGE = `Usage:
   task-cli help [<command>]
 
 Commands:
-  add <description>           Add a new task
-  show <id>                   Show task details
-  update <id> <description>   Update task description
-  delete <id>                 Delete a task
-  done <id>                   Mark task as done
-  start <id>                  Mark task as in-progress
-  reopen <id>                 Reopen a completed task
-  list [filter]               List tasks (filter: todo|in-progress|done)
-  help [<command>]            Show this help
+  add <description>                      Add a new task
+  show <id>                              Show task details
+  update <id> [description]               Update task
+  delete <id>                            Delete a task
+  done <id>                              Mark task as done
+  start <id>                             Mark task as in-progress
+  reopen <id>                            Reopen a completed task
+  list [filter]                          List tasks (filter: todo|in-progress|done)
+  search <query>                         Full-text search in tasks
+  due <today|overdue|week>               Show tasks due today, overdue, or this week
+  stats                                  Show task statistics
+  help [<command>]                       Show this help
 
 Aliases:
-  mark-done <id>              Same as: done <id>
-  mark-in-progress <id>       Same as: start <id>`;
+  mark-done <id>                         Same as: done <id>
+  mark-in-progress <id>                  Same as: start <id>`;
 
 const COMMAND_ARGS = {
   add: [1, 1],
   show: [1, 1],
-  update: [2, 2],
+  update: [1, 2],
   delete: [1, 1],
   done: [1, 1],
   start: [1, 1],
@@ -36,6 +39,9 @@ const COMMAND_ARGS = {
   'mark-done': [1, 1],
   'mark-in-progress': [1, 1],
   list: [0, 1],
+  search: [1, 1],
+  due: [1, 1],
+  stats: [0, 0],
   help: [0, 1],
 };
 
@@ -51,13 +57,45 @@ function checkArity(command, args) {
 
 function parseFlags(argv) {
   const flags = {
-    json: argv.includes('--json'),
-    noColor: argv.includes('--no-color'),
-    yes: argv.includes('--yes'),
-    help: argv.includes('--help'),
+    json: false,
+    noColor: false,
+    yes: false,
+    help: false,
   };
-  const remaining = argv.filter((arg) => !arg.startsWith('--'));
-  return { flags, remaining };
+  const values = {};
+  const remaining = [];
+
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+    if (arg === '--json') {
+      flags.json = true;
+      i++;
+    } else if (arg === '--no-color') {
+      flags.noColor = true;
+      i++;
+    } else if (arg === '--yes') {
+      flags.yes = true;
+      i++;
+    } else if (arg === '--help') {
+      flags.help = true;
+      i++;
+    } else if (arg.startsWith('--')) {
+      const key = arg.slice(2);
+      if (i + 1 < argv.length && !argv[i + 1].startsWith('--')) {
+        values[key] = argv[i + 1];
+        i += 2;
+      } else {
+        values[key] = true;
+        i++;
+      }
+    } else {
+      remaining.push(arg);
+      i++;
+    }
+  }
+
+  return { flags, values, remaining };
 }
 
 function confirmDelete(io, confirm) {
@@ -70,7 +108,7 @@ function confirmDelete(io, confirm) {
 }
 
 function runCommand(argv, io = console, storageModule = storage, confirm = null) {
-  const { flags, remaining } = parseFlags(argv);
+  const { flags, values, remaining } = parseFlags(argv);
 
   if (flags.noColor) {
     setForceColor(false);
@@ -103,7 +141,14 @@ function runCommand(argv, io = console, storageModule = storage, confirm = null)
       case 'add': {
         const tasks = storageModule.loadTasks();
         const now = new Date().toISOString();
-        const { tasks: updated, task } = createTask(tasks, args[0], now);
+        const options = {
+          title: values.title,
+          priority: values.priority ? parsePriority(values.priority) : undefined,
+          dueAt: values.due ? parseDueDate(values.due) : undefined,
+          project: values.project,
+          tags: values.tags ? parseTags(values.tags) : undefined,
+        };
+        const { tasks: updated, task } = createTask(tasks, args[0], options, now);
         storageModule.saveTasks(updated);
         io.log(`Task added successfully (ID: ${task.id})`);
         return 0;
@@ -126,7 +171,15 @@ function runCommand(argv, io = console, storageModule = storage, confirm = null)
         const id = parseTaskId(args[0]);
         const tasks = storageModule.loadTasks();
         const now = new Date().toISOString();
-        const { tasks: updated } = updateTask(tasks, id, args[1], now);
+        const options = {
+          title: values.title,
+          priority: values.priority ? parsePriority(values.priority) : undefined,
+          dueAt: values.due ? parseDueDate(values.due) : undefined,
+          project: values.project,
+          tags: values.tags ? parseTags(values.tags) : undefined,
+        };
+        const description = args[1];
+        const { tasks: updated } = updateTask(tasks, id, description, options, now);
         storageModule.saveTasks(updated);
         io.log(`Task updated successfully (ID: ${id})`);
         return 0;
@@ -172,12 +225,63 @@ function runCommand(argv, io = console, storageModule = storage, confirm = null)
         return 0;
       }
       case 'list': {
-        const filter = args.length === 1 ? parseStatusFilter(args[0]) : null;
-        const tasks = listTasks(storageModule.loadTasks(), filter);
+        const positionalFilter = args.length === 1 ? args[0] : null;
+        const filter = {
+          status: values.status ? parseStatusFilter(values.status) : (positionalFilter ? parseStatusFilter(positionalFilter) : null),
+          priority: values.priority ? parsePriority(values.priority) : null,
+          project: values.project || null,
+          tag: values.tag || null,
+          query: values.query || null,
+        };
+        const sortBy = values.sort || 'id';
+        const tasks = listTasks(storageModule.loadTasks(), filter, sortBy);
         if (outputJson) {
           io.log(formatTaskListJson(tasks));
         } else {
           io.log(formatTaskList(tasks));
+        }
+        return 0;
+      }
+      case 'search': {
+        const tasks = searchTasks(storageModule.loadTasks(), args[0]);
+        if (outputJson) {
+          io.log(formatTaskListJson(tasks));
+        } else {
+          io.log(formatTaskList(tasks));
+        }
+        return 0;
+      }
+      case 'due': {
+        const allTasks = storageModule.loadTasks();
+        let tasks;
+        if (args[0] === 'today') {
+          tasks = getTodayTasks(allTasks);
+        } else if (args[0] === 'overdue') {
+          tasks = getOverdueTasks(allTasks);
+        } else if (args[0] === 'week') {
+          tasks = getWeekTasks(allTasks);
+        } else {
+          throw new CliError(`Unknown due filter "${args[0]}". Supported: today, overdue, week.\n${USAGE}`);
+        }
+        if (outputJson) {
+          io.log(formatTaskListJson(tasks));
+        } else {
+          io.log(formatTaskList(tasks));
+        }
+        return 0;
+      }
+      case 'stats': {
+        const stats = getStats(storageModule.loadTasks());
+        if (outputJson) {
+          io.log(JSON.stringify(stats, null, 2));
+        } else {
+          io.log(`Total: ${stats.total}`);
+          io.log(`Todo: ${stats.todo}`);
+          io.log(`In Progress: ${stats.inProgress}`);
+          io.log(`Done: ${stats.done}`);
+          io.log(`Overdue: ${stats.overdue}`);
+          io.log(`Due Today: ${stats.today}`);
+          io.log(`Due This Week: ${stats.thisWeek}`);
         }
         return 0;
       }

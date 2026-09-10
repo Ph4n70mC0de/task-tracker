@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-09-10
+
+### Added
+- `task-cli search <query>` for full-text search across title, description, project, and tags.
+- `task-cli due today|overdue|week` for time-based task views.
+- `task-cli stats` for task counts (total, todo, in-progress, done, overdue, today, this week).
+- `list` command supports `--status`, `--priority`, `--project`, `--tag`, `--sort`, and `--query` flags.
+- Deterministic sorting by id, created, updated, due, priority, and status.
+- Domain tests for multi-criteria filtering, sorting, search, overdue/today/week detection, and statistics.
+- CLI integration tests for search, due queries, stats, and multi-flag list filtering.
+
+### Changed
+- `list` positional filter still works for backward compatibility.
+- Sort defaults to ID when no `--sort` flag is provided.
+
+## [1.2.0] - 2026-09-10
+
+### Added
+- Schema version 2 with new task fields: `title`, `priority`, `project`, `tags`, `dueAt`, `completedAt`.
+- Automatic migration from v1 to v2 on load; old `tasks.json` files are upgraded in place with safe defaults.
+- `--priority` flag on `add` and `update` (values: `low`, `medium`, `high`, `urgent`).
+- `--due <ISO-8601 date>` flag on `add` and `update`.
+- `--project <name>` flag on `add` and `update`.
+- `--tags <tag1,tag2>` flag on `add` and `update`.
+- `done` command now records `completedAt` timestamp.
+- `reopen` command clears `completedAt`.
+- Validation for priority values, ISO-8601 due dates, and tag arrays.
+- Colored priority indicators in human-readable output.
+- Storage tests for migration, validation of new fields, and idempotent load of v2 data.
+- Domain tests for optional fields, partial updates, and `completedAt` behavior.
+
+### Changed
+- `update` command accepts optional description argument when only flags are provided.
+- `saveTasks` writes `__version: 2` into every persisted task record.
+- `loadTasks` migrates v1 records to v2 and rewrites the file only when migration occurs.
+
+### Fixed
+- Validation now accepts both v1 and v2 task records during migration.
+
 ## [1.1.0] - 2026-09-10
 
 ### Added

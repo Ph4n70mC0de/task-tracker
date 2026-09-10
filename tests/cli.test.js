@@ -140,10 +140,9 @@ test('missing and extra arguments are rejected with usage info', () => {
   assert.equal(noDesc.code, 1);
   assert.match(noDesc.err, /Wrong number of arguments for "add"/);
 
-  assert.equal(cli('update', '1').code, 1);
   assert.equal(cli('delete', '1', 'extra').code, 1);
   assert.equal(cli('list', 'todo', 'extra').code, 1);
-  assert.match(cli('update', '1').err, /Usage:/);
+  assert.match(cli('delete', '1', 'extra').err, /Usage:/);
 });
 
 test('unknown command and no command are rejected', () => {
@@ -317,4 +316,194 @@ test('--no-color flag is accepted without error', () => {
   const result = cli('--no-color', 'list');
   assert.equal(result.code, 0);
   assert.match(result.out, /Buy groceries/);
+});
+
+test('add: supports --priority --due --project --tags', () => {
+  const result = cli('add', 'Buy groceries', '--priority', 'high', '--due', '2026-09-15', '--project', 'Home', '--tags', 'shopping,urgent');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Task added successfully/);
+
+  const tasks = loadJson();
+  assert.equal(tasks[0].priority, 'high');
+  assert.equal(tasks[0].project, 'Home');
+  assert.deepEqual(tasks[0].tags, ['shopping', 'urgent']);
+  assert.ok(tasks[0].dueAt);
+});
+
+test('add: rejects invalid priority', () => {
+  const result = cli('add', 'Buy groceries', '--priority', 'critical');
+  assert.equal(result.code, 1);
+  assert.match(result.err, /not a valid priority/);
+});
+
+test('add: rejects invalid due date', () => {
+  const result = cli('add', 'Buy groceries', '--due', 'not-a-date');
+  assert.equal(result.code, 1);
+  assert.match(result.err, /not a valid ISO-8601 date/);
+});
+
+test('update: supports --priority --due --project --tags', () => {
+  cli('add', 'Buy groceries');
+  const result = cli('update', '1', '--priority', 'low', '--project', 'Work', '--tags', 'work');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Task updated successfully/);
+
+  const task = loadJson()[0];
+  assert.equal(task.priority, 'low');
+  assert.equal(task.project, 'Work');
+  assert.deepEqual(task.tags, ['work']);
+});
+
+test('done: sets completedAt timestamp', () => {
+  cli('add', 'Buy groceries');
+  const before = loadJson()[0].updatedAt;
+  const result = cli('done', '1');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Task marked as done/);
+
+  const task = loadJson()[0];
+  assert.equal(task.status, 'done');
+  assert.ok(task.completedAt);
+  assert.notEqual(task.completedAt, before);
+});
+
+test('reopen: clears completedAt', () => {
+  cli('add', 'Buy groceries');
+  cli('done', '1');
+  assert.ok(loadJson()[0].completedAt);
+
+  const result = cli('reopen', '1');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Task reopened/);
+
+  const task = loadJson()[0];
+  assert.equal(task.status, 'todo');
+  assert.equal(task.completedAt, null);
+});
+
+test('show: displays new fields in human-readable output', () => {
+  cli('add', 'Buy groceries', '--priority', 'high', '--project', 'Home', '--tags', 'shopping,urgent', '--due', '2026-09-15');
+  const result = cli('show', '1');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Priority: high/);
+  assert.match(result.out, /Project: Home/);
+  assert.match(result.out, /Tags: shopping, urgent/);
+  assert.match(result.out, /Due: 2026-09-15/);
+});
+
+test('show --json: includes all v2 fields', () => {
+  cli('add', 'Buy groceries', '--priority', 'high');
+  const result = cli('show', '--json', '1');
+  assert.equal(result.code, 0);
+  const parsed = JSON.parse(result.out);
+  assert.equal(parsed.priority, 'high');
+  assert.equal(parsed.__version, 2);
+  assert.ok('title' in parsed);
+  assert.ok('tags' in parsed);
+  assert.ok('dueAt' in parsed);
+  assert.ok('completedAt' in parsed);
+});
+
+test('list --json: includes all v2 fields', () => {
+  cli('add', 'Buy groceries', '--priority', 'urgent');
+  const result = cli('list', '--json');
+  assert.equal(result.code, 0);
+  const parsed = JSON.parse(result.out);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].priority, 'urgent');
+  assert.equal(parsed[0].__version, 2);
+});
+
+test('list: supports multiple filter flags', () => {
+  cli('add', 'Buy groceries', '--priority', 'high', '--project', 'Home');
+  cli('add', 'Write code', '--priority', 'low', '--project', 'Work');
+  const result = cli('list', '--priority', 'high', '--project', 'Home');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Buy groceries/);
+  assert.doesNotMatch(result.out, /Write code/);
+});
+
+test('list: supports --sort flag', () => {
+  cli('add', 'Buy groceries', '--priority', 'low');
+  cli('add', 'Write code', '--priority', 'high');
+  const result = cli('list', '--sort', 'priority');
+  assert.equal(result.code, 0);
+  const lines = result.out.split('\n').filter((l) => l.startsWith('ID:'));
+  assert.equal(lines.length, 2);
+});
+
+test('search: finds tasks by title', () => {
+  cli('add', 'Buy groceries');
+  cli('add', 'Write code');
+  const result = cli('search', 'groceries');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Buy groceries/);
+  assert.doesNotMatch(result.out, /Write code/);
+});
+
+test('search: finds tasks by tag', () => {
+  cli('add', 'Buy groceries', '--tags', 'shopping');
+  cli('add', 'Write code', '--tags', 'work');
+  const result = cli('search', 'shopping');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Buy groceries/);
+  assert.doesNotMatch(result.out, /Write code/);
+});
+
+test('search: returns empty for no matches', () => {
+  cli('add', 'Buy groceries');
+  const result = cli('search', 'nonexistent');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /No tasks found/);
+});
+
+test('due today: shows tasks due today', () => {
+  const today = new Date().toISOString().slice(0, 10);
+  cli('add', 'Buy groceries', '--due', today);
+  const result = cli('due', 'today');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Buy groceries/);
+});
+
+test('due overdue: shows tasks past due', () => {
+  cli('add', 'Old task', '--due', '2020-01-01');
+  const result = cli('due', 'overdue');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Old task/);
+});
+
+test('due week: shows tasks due this week', () => {
+  const future = new Date();
+  future.setDate(future.getDate() + 2);
+  const iso = future.toISOString().slice(0, 10);
+  cli('add', 'Future task', '--due', iso);
+  const result = cli('due', 'week');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Future task/);
+});
+
+test('stats: shows task counts', () => {
+  cli('add', 'Buy groceries');
+  cli('add', 'Write code');
+  cli('done', '1');
+  const result = cli('stats');
+  assert.equal(result.code, 0);
+  assert.match(result.out, /Total: 2/);
+  assert.match(result.out, /Todo: 1/);
+  assert.match(result.out, /Done: 1/);
+});
+
+test('stats --json: outputs JSON', () => {
+  cli('add', 'Buy groceries');
+  const result = cli('stats', '--json');
+  assert.equal(result.code, 0);
+  const parsed = JSON.parse(result.out);
+  assert.equal(parsed.total, 1);
+  assert.equal(parsed.todo, 1);
+});
+
+test('unknown due filter is rejected', () => {
+  const result = cli('due', 'invalid');
+  assert.equal(result.code, 1);
+  assert.match(result.err, /Unknown due filter/);
 });

@@ -24,8 +24,14 @@ afterEach(() => {
 
 const TASK = {
   id: 1,
+  title: 'Buy groceries',
   description: 'Buy groceries',
   status: 'todo',
+  priority: 'medium',
+  project: null,
+  tags: [],
+  dueAt: null,
+  completedAt: null,
   createdAt: '2026-09-08T10:00:00.000Z',
   updatedAt: '2026-09-08T10:00:00.000Z',
 };
@@ -44,7 +50,7 @@ test('loadTasks round-trips tasks saved by saveTasks', () => {
   storage.ensureStorageFile();
   storage.saveTasks([TASK]);
   const loaded = storage.loadTasks();
-  assert.deepEqual(loaded, [TASK]);
+  assert.deepEqual(loaded, [{ ...TASK, __version: 2 }]);
 });
 
 test('loadTasks rejects malformed JSON instead of silently overwriting it', () => {
@@ -88,7 +94,7 @@ test('saveTasks leaves no temp file behind on success', () => {
   storage.ensureStorageFile();
   storage.saveTasks([TASK]);
   assert.equal(fs.existsSync(process.env.TASK_TRACKER_FILE + '.tmp'), false);
-  assert.deepEqual(storage.loadTasks(), [TASK]);
+  assert.deepEqual(storage.loadTasks(), [{ ...TASK, __version: 2 }]);
 });
 
 test('saveTasks cleans up the temp file when the final rename fails', () => {
@@ -100,5 +106,62 @@ test('saveTasks cleans up the temp file when the final rename fails', () => {
   fs.mkdirSync(process.env.TASK_TRACKER_FILE);
   assert.throws(() => storage.saveTasks([TASK]), /Could not write/);
   assert.equal(fs.existsSync(process.env.TASK_TRACKER_FILE + '.tmp'), false);
+});
+
+test('loadTasks migrates v1 records to v2 with defaults', () => {
+  const v1 = [
+    {
+      id: 1,
+      description: 'Buy groceries',
+      status: 'todo',
+      createdAt: '2026-09-08T10:00:00.000Z',
+      updatedAt: '2026-09-08T10:00:00.000Z',
+    },
+  ];
+  fs.writeFileSync(process.env.TASK_TRACKER_FILE, JSON.stringify(v1));
+  const loaded = storage.loadTasks();
+  assert.equal(loaded.length, 1);
+  assert.equal(loaded[0].__version, 2);
+  assert.equal(loaded[0].title, 'Buy groceries');
+  assert.equal(loaded[0].priority, 'medium');
+  assert.equal(loaded[0].project, null);
+  assert.deepEqual(loaded[0].tags, []);
+  assert.equal(loaded[0].dueAt, null);
+  assert.equal(loaded[0].completedAt, null);
+  assert.equal(loaded[0].description, 'Buy groceries');
+});
+
+test('loadTasks does not re-save if already v2', () => {
+  storage.ensureStorageFile();
+  storage.saveTasks([TASK]);
+  const mtimeBefore = fs.statSync(process.env.TASK_TRACKER_FILE).mtimeMs;
+  const loaded = storage.loadTasks();
+  const mtimeAfter = fs.statSync(process.env.TASK_TRACKER_FILE).mtimeMs;
+  assert.deepEqual(loaded, [{ ...TASK, __version: 2 }]);
+  assert.equal(mtimeBefore, mtimeAfter);
+});
+
+test('loadTasks rejects records with invalid priority', () => {
+  const bad = [{ ...TASK, priority: 'critical' }];
+  fs.writeFileSync(process.env.TASK_TRACKER_FILE, JSON.stringify(bad));
+  assert.throws(() => storage.loadTasks(), /invalid task record/);
+});
+
+test('loadTasks rejects records with invalid dueAt type', () => {
+  const bad = [{ ...TASK, dueAt: 123 }];
+  fs.writeFileSync(process.env.TASK_TRACKER_FILE, JSON.stringify(bad));
+  assert.throws(() => storage.loadTasks(), /invalid task record/);
+});
+
+test('loadTasks rejects records with non-array tags', () => {
+  const bad = [{ ...TASK, tags: 'tag1,tag2' }];
+  fs.writeFileSync(process.env.TASK_TRACKER_FILE, JSON.stringify(bad));
+  assert.throws(() => storage.loadTasks(), /invalid task record/);
+});
+
+test('loadTasks rejects records with non-string tag', () => {
+  const bad = [{ ...TASK, tags: [1, 2] }];
+  fs.writeFileSync(process.env.TASK_TRACKER_FILE, JSON.stringify(bad));
+  assert.throws(() => storage.loadTasks(), /invalid task record/);
 });
 

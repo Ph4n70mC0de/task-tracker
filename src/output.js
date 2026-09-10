@@ -6,12 +6,21 @@ const COLORS = Object.freeze({
   yellow: '\x1b[33m',
   blue: '\x1b[34m',
   red: '\x1b[31m',
+  cyan: '\x1b[36m',
+  gray: '\x1b[90m',
 });
 
 const STATUS_COLORS = Object.freeze({
   'todo': 'blue',
   'in-progress': 'yellow',
   'done': 'green',
+});
+
+const PRIORITY_COLORS = Object.freeze({
+  low: 'gray',
+  medium: 'blue',
+  high: 'yellow',
+  urgent: 'red',
 });
 
 let forceColor = null;
@@ -36,12 +45,34 @@ function formatStatus(status) {
   return colorize(status, STATUS_COLORS[status] || 'reset');
 }
 
+function formatPriority(priority) {
+  return colorize(priority, PRIORITY_COLORS[priority] || 'reset');
+}
+
+function formatField(label, value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  if (Array.isArray(value) && value.length === 0) {
+    return null;
+  }
+  const formatted = Array.isArray(value) ? value.join(', ') : value;
+  return `${label}: ${formatted}`;
+}
+
 function formatTask(task) {
-  return [
-    `ID: ${task.id} | ${formatStatus(task.status)} | ${task.description}`,
+  const lines = [
+    `ID: ${task.id} | ${formatStatus(task.status)} | ${task.title || task.description}`,
+    formatField('Description', task.description),
+    formatField('Priority', formatPriority(task.priority)),
+    formatField('Project', task.project),
+    formatField('Tags', task.tags),
+    formatField('Due', task.dueAt),
+    formatField('Completed', task.completedAt),
     `Created: ${task.createdAt}`,
     `Updated: ${task.updatedAt}`,
-  ].join('\n');
+  ].filter(Boolean);
+  return lines.join('\n');
 }
 
 function formatTaskList(tasks) {
@@ -68,4 +99,6 @@ module.exports = {
   colorEnabled,
   colorize,
   formatStatus,
+  formatPriority,
+  formatField,
 };
