@@ -78,6 +78,12 @@ test('loadTasks rejects duplicate task IDs', () => {
   assert.throws(() => storage.loadTasks(), /duplicate task IDs/);
 });
 
+test('loadTasks rejects records with a non-string description', () => {
+  const bad = [{ ...TASK, description: 42 }];
+  fs.writeFileSync(process.env.TASK_TRACKER_FILE, JSON.stringify(bad));
+  assert.throws(() => storage.loadTasks(), /invalid task record/);
+});
+
 test('saveTasks leaves no temp file behind on success', () => {
   storage.ensureStorageFile();
   storage.saveTasks([TASK]);
