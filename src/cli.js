@@ -1,27 +1,42 @@
 'use strict';
 
-const { CliError, ValidationError, parseTaskId, parseStatusFilter, STATUSES } = require('./validation');
+const fs = require('node:fs');
+const { CliError, ValidationError, parseTaskId, parseStatusFilter, STATUSES, resolveCommandStatus } = require('./validation');
 const { createTask, updateTask, deleteTask, setTaskStatus, listTasks } = require('./tasks');
-const { formatTaskList } = require('./output');
+const { formatTaskList, formatTask, formatTaskListJson, formatTaskJson, setForceColor } = require('./output');
 const storage = require('./storage');
 
 const USAGE = `Usage:
-  task-cli add <description>
-  task-cli update <id> <description>
-  task-cli delete <id>
-  task-cli mark-in-progress <id>
-  task-cli mark-done <id>
-  task-cli list [done|todo|in-progress]`;
+  task-cli [--json] [--no-color] [--yes] <command> [args...]
+  task-cli help [<command>]
 
-// Arity table: [minimum, maximum] positional arguments per command.
-// Extra arguments are rejected rather than silently ignored.
+Commands:
+  add <description>           Add a new task
+  show <id>                   Show task details
+  update <id> <description>   Update task description
+  delete <id>                 Delete a task
+  done <id>                   Mark task as done
+  start <id>                  Mark task as in-progress
+  reopen <id>                 Reopen a completed task
+  list [filter]               List tasks (filter: todo|in-progress|done)
+  help [<command>]            Show this help
+
+Aliases:
+  mark-done <id>              Same as: done <id>
+  mark-in-progress <id>       Same as: start <id>`;
+
 const COMMAND_ARGS = {
   add: [1, 1],
+  show: [1, 1],
   update: [2, 2],
   delete: [1, 1],
-  'mark-in-progress': [1, 1],
+  done: [1, 1],
+  start: [1, 1],
+  reopen: [1, 1],
   'mark-done': [1, 1],
+  'mark-in-progress': [1, 1],
   list: [0, 1],
+  help: [0, 1],
 };
 
 function checkArity(command, args) {
@@ -34,14 +49,40 @@ function checkArity(command, args) {
   }
 }
 
-/**
- * Execute one CLI invocation. Returns the process exit code.
- * All errors are reported as "Error: <message>" via io.error, never a stack trace.
- * io (log/error) is injectable so tests can capture output.
- */
-function runCommand(argv, io = console, storageModule = storage) {
-  const command = argv[0];
-  const args = argv.slice(1);
+function parseFlags(argv) {
+  const flags = {
+    json: argv.includes('--json'),
+    noColor: argv.includes('--no-color'),
+    yes: argv.includes('--yes'),
+    help: argv.includes('--help'),
+  };
+  const remaining = argv.filter((arg) => !arg.startsWith('--'));
+  return { flags, remaining };
+}
+
+function confirmDelete(io, confirm) {
+  if (!confirm) return true;
+  const answer = confirm('Delete this task? (y/N) ');
+  if (!answer) {
+    io.log('Deletion cancelled.');
+  }
+  return answer;
+}
+
+function runCommand(argv, io = console, storageModule = storage, confirm = null) {
+  const { flags, remaining } = parseFlags(argv);
+
+  if (flags.noColor) {
+    setForceColor(false);
+  }
+
+  if (flags.help) {
+    io.log(USAGE);
+    return 0;
+  }
+
+  const command = remaining[0];
+  const args = remaining.slice(1);
 
   try {
     if (!command) {
@@ -52,13 +93,33 @@ function runCommand(argv, io = console, storageModule = storage) {
     }
     checkArity(command, args);
 
+    const outputJson = flags.json;
+
     switch (command) {
+      case 'help': {
+        io.log(USAGE);
+        return 0;
+      }
       case 'add': {
         const tasks = storageModule.loadTasks();
         const now = new Date().toISOString();
         const { tasks: updated, task } = createTask(tasks, args[0], now);
         storageModule.saveTasks(updated);
         io.log(`Task added successfully (ID: ${task.id})`);
+        return 0;
+      }
+      case 'show': {
+        const id = parseTaskId(args[0]);
+        const tasks = storageModule.loadTasks();
+        const task = tasks.find((t) => t.id === id);
+        if (!task) {
+          throw new ValidationError(`Task with ID ${id} was not found.`);
+        }
+        if (outputJson) {
+          io.log(formatTaskJson(task));
+        } else {
+          io.log(formatTask(task));
+        }
         return 0;
       }
       case 'update': {
@@ -71,6 +132,9 @@ function runCommand(argv, io = console, storageModule = storage) {
         return 0;
       }
       case 'delete': {
+        if (!flags.yes && !confirmDelete(io, confirm)) {
+          return 0;
+        }
         const id = parseTaskId(args[0]);
         const tasks = storageModule.loadTasks();
         const { tasks: updated } = deleteTask(tasks, id);
@@ -78,21 +142,43 @@ function runCommand(argv, io = console, storageModule = storage) {
         io.log(`Task deleted successfully (ID: ${id})`);
         return 0;
       }
-      case 'mark-in-progress':
+      case 'done':
       case 'mark-done': {
         const id = parseTaskId(args[0]);
-        const status = command === 'mark-done' ? 'done' : 'in-progress';
         const tasks = storageModule.loadTasks();
         const now = new Date().toISOString();
-        const { tasks: updated } = setTaskStatus(tasks, id, status, now);
+        const { tasks: updated } = setTaskStatus(tasks, id, 'done', now);
         storageModule.saveTasks(updated);
-        io.log(`Task marked as ${status} (ID: ${id})`);
+        io.log(`Task marked as done (ID: ${id})`);
+        return 0;
+      }
+      case 'start':
+      case 'mark-in-progress': {
+        const id = parseTaskId(args[0]);
+        const tasks = storageModule.loadTasks();
+        const now = new Date().toISOString();
+        const { tasks: updated } = setTaskStatus(tasks, id, 'in-progress', now);
+        storageModule.saveTasks(updated);
+        io.log(`Task marked as in-progress (ID: ${id})`);
+        return 0;
+      }
+      case 'reopen': {
+        const id = parseTaskId(args[0]);
+        const tasks = storageModule.loadTasks();
+        const now = new Date().toISOString();
+        const { tasks: updated } = setTaskStatus(tasks, id, 'todo', now);
+        storageModule.saveTasks(updated);
+        io.log(`Task reopened (ID: ${id})`);
         return 0;
       }
       case 'list': {
         const filter = args.length === 1 ? parseStatusFilter(args[0]) : null;
         const tasks = listTasks(storageModule.loadTasks(), filter);
-        io.log(formatTaskList(tasks));
+        if (outputJson) {
+          io.log(formatTaskListJson(tasks));
+        } else {
+          io.log(formatTaskList(tasks));
+        }
         return 0;
       }
       // Unreachable: every command in COMMAND_ARGS has a case above.
@@ -102,8 +188,6 @@ function runCommand(argv, io = console, storageModule = storage) {
       io.error(`Error: ${err.message}`);
       return 1;
     }
-    // Unexpected failures (e.g. filesystem errors) still get a clean message
-    // for CLI users; the stack trace is kept for debugging.
     io.error(`Error: ${err.message}`);
     if (process.env.NODE_ENV !== 'production') {
       io.error(err.stack);
